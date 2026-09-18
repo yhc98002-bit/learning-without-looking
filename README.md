@@ -1,5 +1,7 @@
 # Same Reward, Different Skills
 
+Data, per-item evaluation outputs and the trained model: [huggingface.co/datasets/Despaireyes613/learning-without-looking](https://huggingface.co/datasets/Despaireyes613/learning-without-looking)
+
 Code and released data for a study of what reinforcement learning with verifiable rewards (RLVR)
 teaches a vision-language model about looking.
 
@@ -120,8 +122,7 @@ you skip these steps. The grounding suite and its twin are released frozen; thei
 
 ## Released data
 
-`scripts/fetch_data.py` downloads from the dataset repository,
-[Despaireyes613/learning-without-looking](https://huggingface.co/datasets/Despaireyes613/learning-without-looking):
+`scripts/fetch_data.py` downloads from the dataset repository linked at the top:
 
 | part | size | contents |
 |---|---|---|
