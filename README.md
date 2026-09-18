@@ -42,7 +42,6 @@ tests/              CPU tests
 Python 3.10 to 3.12 (numpy 1.26.4 has no wheels for 3.13):
 
 ```bash
-git clone https://github.com/yhc98002-bit/learning-without-looking
 cd learning-without-looking
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-cpu.txt    # analysis and tests
