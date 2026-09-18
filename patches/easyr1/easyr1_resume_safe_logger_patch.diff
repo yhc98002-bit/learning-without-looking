@@ -1,0 +1,47 @@
+diff --git a/verl/utils/logger/logger.py b/verl/utils/logger/logger.py
+index f8b99c1..20cfdd7 100644
+--- a/verl/utils/logger/logger.py
++++ b/verl/utils/logger/logger.py
+@@ -65,14 +65,31 @@ class FileLogger(Logger):
+     def __init__(self, config: dict[str, Any]) -> None:
+         self.config = config
+         print(f"Initializing logging file to {config['trainer']['save_checkpoint_path']}.")
+-        os.makedirs(config["trainer"]["save_checkpoint_path"], exist_ok=True)
+-        with open(os.path.join(config["trainer"]["save_checkpoint_path"], "experiment_config.json"), "w") as f:
+-            json.dump(config, f, indent=2)
++        output_dir = config["trainer"]["save_checkpoint_path"]
++        os.makedirs(output_dir, exist_ok=True)
++        config_path = os.path.join(output_dir, "experiment_config.json")
++        log_path = os.path.join(output_dir, "experiment_log.jsonl")
++        generations_path = os.path.join(output_dir, "generations.log")
++        resume_requested = bool(config["trainer"].get("load_checkpoint_path")) or bool(
++            config["trainer"].get("find_last_checkpoint", False)
++        )
++        existing = [path for path in (config_path, log_path, generations_path) if os.path.exists(path)]
++        if existing and not resume_requested:
++            raise FileExistsError(
++                "Refusing to truncate existing EasyR1 file logger artifacts without an explicit resume: "
++                + ", ".join(existing)
++            )
++        if resume_requested:
++            for path in existing:
++                print(f"Preserving existing EasyR1 file logger artifact during resume: {path}")
+-
++
+-        with open(os.path.join(config["trainer"]["save_checkpoint_path"], "experiment_log.jsonl"), "w") as f:
+-            pass
++        if not os.path.exists(config_path):
++            with open(config_path, "x") as f:
++                json.dump(config, f, indent=2)
+-
++
+-        with open(os.path.join(config["trainer"]["save_checkpoint_path"], "generations.log"), "w") as f:
+-            pass
++        for path in (log_path, generations_path):
++            if not os.path.exists(path):
++                with open(path, "x"):
++                    pass
+-
++
+     def log(self, data: dict[str, Any], step: int) -> None:
+         with open(os.path.join(self.config["trainer"]["save_checkpoint_path"], "experiment_log.jsonl"), "a") as f:

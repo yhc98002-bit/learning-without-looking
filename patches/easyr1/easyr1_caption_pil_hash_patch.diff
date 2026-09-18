@@ -1,0 +1,127 @@
+--- a/verl/utils/dataset.py
++++ b/verl/utils/dataset.py
+@@ -17,6 +17,7 @@
+ import math
+ import os
+ from collections import defaultdict
++from functools import lru_cache
+ from io import BytesIO
+ from typing import Any, Optional, Union
+ 
+@@ -92,6 +93,27 @@
+     return digest.hexdigest()
+ 
+ 
++def _pixel_sha256(image: Union[dict[str, Any], ImageObject, str, bytes]) -> str:
++    if isinstance(image, str):
++        with Image.open(image) as source:
++            normalized = source.convert("RGBA")
++    elif isinstance(image, dict):
++        with Image.open(BytesIO(image["bytes"])) as source:
++            normalized = source.convert("RGBA")
++    elif isinstance(image, bytes):
++        with Image.open(BytesIO(image)) as source:
++            normalized = source.convert("RGBA")
++    elif isinstance(image, ImageObject):
++        normalized = image.convert("RGBA")
++    else:
++        raise TypeError(f"unsupported caption image source: {type(image).__name__}")
++    digest = hashlib.sha256()
++    digest.update(normalized.width.to_bytes(4, "big"))
++    digest.update(normalized.height.to_bytes(4, "big"))
++    digest.update(normalized.tobytes())
++    return digest.hexdigest()
++
++
+ def load_caption_store(paths: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+     rows: dict[str, tuple[str, str, str]] = {}
+     for path in paths:
+@@ -132,6 +154,38 @@
+     return {image_hash: value[0] for image_hash, value in rows.items()}, metadata
+ 
+ 
++@lru_cache(maxsize=8)
++def _load_caption_pixel_index_cached(
++    path_fingerprints: tuple[tuple[str, str], ...]
++) -> tuple[tuple[str, str], ...]:
++    captions: dict[str, str] = {}
++    for path, _ in path_fingerprints:
++        with open(path, encoding="utf-8") as handle:
++            for line in handle:
++                if not line.strip():
++                    continue
++                row = json.loads(line)
++                image_hash = str(row["image_sha256"])
++                image_path = str(row.get("image_path", ""))
++                if not image_path or not os.path.isfile(image_path):
++                    raise ValueError(
++                        f"caption store lacks a readable source image for pixel indexing: {path}"
++                    )
++                pixel_hash = _pixel_sha256(image_path)
++                caption = str(row["caption"]).strip()
++                if pixel_hash in captions and captions[pixel_hash] != caption:
++                    raise ValueError(
++                        f"conflicting captions for normalized pixel hash {pixel_hash}"
++                    )
++                captions[pixel_hash] = caption
++    return tuple(sorted(captions.items()))
++
++
++def load_caption_pixel_index(paths: list[str]) -> dict[str, str]:
++    fingerprints = tuple((path, _sha256_file(path)) for path in paths)
++    return dict(_load_caption_pixel_index_cached(fingerprints))
++
++
+ def condition_image(image: ImageObject, condition: str, seed: int) -> ImageObject:
+     if condition == "real":
+         return image
+@@ -208,11 +262,13 @@
+         self.image_condition_seed = image_condition_seed
+         self.caption_store_paths = list(caption_store_paths or [])
+         self.caption_by_hash: dict[str, str] = {}
++        self.caption_by_pixel_hash: dict[str, str] = {}
+         self.caption_store_metadata: dict[str, str] = {}
+         if image_condition == "caption":
+             self.caption_by_hash, self.caption_store_metadata = load_caption_store(
+                 self.caption_store_paths
+             )
++            self.caption_by_pixel_hash = load_caption_pixel_index(self.caption_store_paths)
+ 
+         if "@" in data_path:
+             data_path, data_split = data_path.split("@")
+@@ -278,14 +334,27 @@
+                 )
+             chunks = [parts[0]]
+             for index, (image, part) in enumerate(zip(images, parts[1:]), start=1):
+-                if not isinstance(image, str):
+-                    raise TypeError("caption condition requires content-addressable image paths")
+-                path = os.path.join(self.image_dir, image) if self.image_dir is not None else image
+-                image_hash = _sha256_file(path)
+-                try:
+-                    caption = self.caption_by_hash[image_hash]
+-                except KeyError as error:
+-                    raise KeyError(f"missing fixed caption for image hash {image_hash}") from error
++                source = (
++                    os.path.join(self.image_dir, image)
++                    if self.image_dir is not None and isinstance(image, str)
++                    else image
++                )
++                caption = None
++                if isinstance(source, str):
++                    caption = self.caption_by_hash.get(_sha256_file(source))
++                elif isinstance(source, dict) and isinstance(source.get("bytes"), bytes):
++                    caption = self.caption_by_hash.get(
++                        hashlib.sha256(source["bytes"]).hexdigest()
++                    )
++                elif isinstance(source, bytes):
++                    caption = self.caption_by_hash.get(hashlib.sha256(source).hexdigest())
++                if caption is None:
++                    pixel_hash = _pixel_sha256(source)
++                    caption = self.caption_by_pixel_hash.get(pixel_hash)
++                if caption is None:
++                    raise KeyError(
++                        f"missing fixed caption for normalized pixel hash {_pixel_sha256(source)}"
++                    )
+                 chunks.append(CAPTION_INSERT_TEMPLATE.format(index=index, caption=caption))
+                 chunks.append(part)
+             return [{"role": "user", "content": "".join(chunks).strip()}]

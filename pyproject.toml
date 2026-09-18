@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "learning-without-looking"
+version = "0.1.0"
+description = "Scene construction, training corpora, reward scoring, evaluation and analysis code."
+requires-python = ">=3.10,<3.13"
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+]
+
+[tool.setuptools.packages.find]
+include = ["lwl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,45 @@
+diff --git a/verl/workers/fsdp_workers.py b/verl/workers/fsdp_workers.py
+index 68bd4ef..b99018d 100644
+--- a/verl/workers/fsdp_workers.py
++++ b/verl/workers/fsdp_workers.py
+@@ -15,6 +15,7 @@
+ The main entry point to run the PPO algorithm
+ """
+ 
++import os
+ from contextlib import nullcontext
+ from typing import Literal, Optional, Union, cast
+ 
+@@ -207,12 +208,14 @@ class FSDPWorker(Worker):
+         else:
+             AutoClass = AutoModelForCausalLM
+ 
++        attn_implementation = os.getenv("EASYR1_ATTN_IMPLEMENTATION", "flash_attention_2")
++
+         if (not fsdp_config.enable_rank0_init) or self.device_mesh.get_local_rank("fsdp") == 0:
+             model = AutoClass.from_pretrained(
+                 model_config.model_path,
+                 config=self.model_config,
+                 torch_dtype=torch_dtype,
+-                attn_implementation="flash_attention_2",
++                attn_implementation=attn_implementation,
+                 device_map="cpu" if fsdp_config.enable_rank0_init else "cuda",
+                 low_cpu_mem_usage=True,
+                 trust_remote_code=model_config.trust_remote_code,
+@@ -220,11 +223,11 @@ class FSDPWorker(Worker):
+         else:
+             with no_init_weights(), init_empty_weights():
+                 model = AutoClass.from_config(
+-                    self.model_config,
+-                    torch_dtype=torch_dtype,
+-                    attn_implementation="flash_attention_2",
+-                    trust_remote_code=model_config.trust_remote_code,
+-                )
++                    self.model_config,
++                    torch_dtype=torch_dtype,
++                    attn_implementation=attn_implementation,
++                    trust_remote_code=model_config.trust_remote_code,
++                )
+ 
+         model = cast(PreTrainedModel, model)  # lint
+         model.tie_weights()  # avoid hanging

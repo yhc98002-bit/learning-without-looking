@@ -1,0 +1,28 @@
+# Analysis and tests on a CPU-only machine: no CUDA, no model weights, no network.
+# Python 3.10 to 3.12; numpy 1.26.4 has no wheels for 3.13.
+#
+#   python3 -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements-cpu.txt
+#   pip install -e .
+#   pytest -q
+#
+# torch, transformers and datasets are not listed: nothing the tests or the analysis
+# import needs them at import time. mathruler (used by lwl.rewards.standard) declares no
+# dependencies, so the three its grader imports (sympy, pylatexenc, tqdm) are pinned here;
+# sympy at 1.13.1, the version torch 2.5.1 installs in the training environment.
+
+pytest==9.1.1
+numpy==1.26.4
+scipy==1.15.3
+pandas==2.3.3
+pyarrow==24.0.0
+pillow==12.3.0
+PyYAML==6.0.3
+Jinja2==3.1.6
+packaging==26.2
+matplotlib==3.10.9
+mathruler==0.1.0
+pylatexenc==2.10
+sympy==1.13.1
+tqdm==4.68.4
+huggingface_hub==0.36.2

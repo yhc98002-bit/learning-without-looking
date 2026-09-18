@@ -1,0 +1,42 @@
+# Training and evaluation environment (Python 3.10).
+# torch and torchvision are cu121 builds and need an extra index:
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+transformers==4.56.2
+accelerate==1.14.0
+datasets==5.0.0
+peft==0.19.1
+huggingface_hub==0.36.2
+
+# vllm is held at 0.7.3: 0.8 and later require a CUDA/torch stack incompatible with
+# torch 2.5.1+cu121. flash-attn is deliberately not installed; attention runs through
+# SDPA, selected with EASYR1_ATTN_IMPLEMENTATION=sdpa and worker.actor.padding_free=false.
+vllm==0.7.3
+xformers==0.0.28.post3
+
+# training framework (EasyR1 / verl)
+ray==2.40.0
+tensordict==0.13.0
+torchdata==0.11.0
+codetiming==1.4.0
+omegaconf==2.3.1
+PyYAML==6.0.3
+mathruler==0.1.0
+pylatexenc==2.10
+
+# evaluation
+qwen-vl-utils==0.0.14
+timm==0.9.12
+einops==0.8.2
+sentencepiece==0.2.1
+
+# data handling and analysis
+numpy==1.26.4
+scipy==1.15.3
+pandas==2.3.3
+pyarrow==24.0.0
+pillow==12.3.0
+Jinja2==3.1.6
+packaging==26.2

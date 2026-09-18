@@ -1,0 +1,112 @@
+# Long-horizon run 2, steps 350 to 400: resumes the full checkpoint global_step_350
+# that long-horizon-run2-3b-steps300-350 wrote and trains to step 400.
+# The step counter carries on, so the new checkpoint is global_step_400.
+# Everything else matches long-horizon-run2-3b.
+data:
+  train_files: hiyouga/geometry3k@train
+  val_files: hiyouga/geometry3k@test
+  prompt_key: problem
+  answer_key: answer
+  image_key: images
+  video_key: videos
+  image_dir: null
+  video_fps: 2.0
+  max_prompt_length: 2048
+  max_response_length: 2048
+  rollout_batch_size: 512
+  mini_rollout_batch_size: null
+  # Full-split evaluation is retained, but multimodal object gathers are bounded.
+  val_batch_size: 32  # bounds the multimodal gather; the full test split is still used
+  format_prompt: artifacts/repos/EasyR1/examples/format_prompt/r1v.jinja
+  override_chat_template: null
+  shuffle: true
+  seed: 2
+  min_pixels: 262144
+  max_pixels: 4194304
+  filter_overlong_prompts: true
+algorithm:
+  adv_estimator: grpo
+  disable_kl: false
+  use_kl_loss: true
+  kl_penalty: low_var_kl
+  kl_coef: 0.01
+  online_filtering: false
+  filter_key: overall
+  filter_low: 0.01
+  filter_high: 0.99
+worker:
+  actor:
+    global_batch_size: 128
+    micro_batch_size_per_device_for_update: 1
+    micro_batch_size_per_device_for_experience: 2
+    max_grad_norm: 1.0
+    # EasyR1's padding-free branch requires flash_attn. SDPA must use padded tensors.
+    padding_free: false
+    dynamic_batching: true
+    ulysses_size: 1
+    model:
+      model_path: artifacts/models/Qwen2.5-VL-3B-Instruct
+      enable_gradient_checkpointing: true
+      trust_remote_code: true
+      freeze_vision_tower: false
+      lora:
+        rank: 0
+        alpha: 64
+        target_modules: all-linear
+        exclude_modules: .*visual.*
+    optim:
+      lr: 1.0e-06
+      weight_decay: 0.01
+      strategy: adamw
+      lr_warmup_ratio: 0.0
+    fsdp:
+      enable_full_shard: true
+      enable_cpu_offload: false
+      enable_rank0_init: true
+    offload:
+      offload_params: true
+      offload_optimizer: true
+  rollout:
+    n: 5
+    temperature: 1.0
+    top_p: 1.0
+    limit_images: 0
+    gpu_memory_utilization: 0.6
+    enforce_eager: false
+    enable_chunked_prefill: false
+    tensor_parallel_size: 2
+    disable_tqdm: false
+    val_override_config:
+      temperature: 0.0
+      top_p: 1.0
+      n: 1
+  ref:
+    padding_free: false
+    fsdp:
+      enable_full_shard: true
+      enable_cpu_offload: true
+      enable_rank0_init: true
+    offload:
+      offload_params: false
+  reward:
+    reward_function: artifacts/repos/EasyR1/examples/reward_function/r1v.py:compute_score
+trainer:
+  total_epochs: 1
+  max_steps: 400
+  project_name: learning-without-looking
+  experiment_name: long-horizon-run2-3b-steps350-400
+  logger:
+  - file
+  nnodes: 1
+  n_gpus_per_node: 4
+  max_try_make_batch: 20
+  val_freq: 10
+  val_before_train: true
+  val_only: false
+  val_generations_to_log: 8
+  save_freq: 50
+  save_limit: -1
+  save_model_only: false
+  save_checkpoint_path: checkpoints/long-horizon-run2-3b-steps350-400
+  load_checkpoint_path: checkpoints/long-horizon-run2-3b-steps300-350/global_step_350
+  find_last_checkpoint: false

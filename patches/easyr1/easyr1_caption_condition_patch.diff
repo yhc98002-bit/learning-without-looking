@@ -1,0 +1,185 @@
+diff --git a/verl/trainer/config.py b/verl/trainer/config.py
+--- a/verl/trainer/config.py
++++ b/verl/trainer/config.py
+@@ -57,11 +57,15 @@
+     filter_overlong_prompts_workers: int = 16
+     image_condition: str = "real"
+     image_condition_seed: int = 0
++    caption_store_paths: list[str] = field(default_factory=list)
+ 
+     def post_init(self):
+         self.image_dir = get_abs_path(self.image_dir, prompt="Image directory")
+         self.format_prompt = get_abs_path(self.format_prompt, prompt="Format prompt file")
+         self.override_chat_template = get_abs_path(self.override_chat_template, prompt="Chat template file")
++        self.caption_store_paths = [
++            get_abs_path(path, prompt="Caption store file") for path in self.caption_store_paths
++        ]
+ 
+ 
+ @dataclass
+diff --git a/verl/trainer/data_loader.py b/verl/trainer/data_loader.py
+--- a/verl/trainer/data_loader.py
++++ b/verl/trainer/data_loader.py
+@@ -43,6 +43,7 @@
+         filter_overlong_prompts_workers=config.filter_overlong_prompts_workers,
+         image_condition=config.image_condition,
+         image_condition_seed=config.image_condition_seed,
++        caption_store_paths=config.caption_store_paths,
+     )
+     # use sampler for better ckpt resume
+     if config.shuffle:
+@@ -85,6 +86,7 @@
+         filter_overlong_prompts=config.filter_overlong_prompts,
+         image_condition=config.image_condition,
+         image_condition_seed=config.image_condition_seed,
++        caption_store_paths=config.caption_store_paths,
+     )
+ 
+     if config.val_batch_size == -1:
+diff --git a/verl/utils/dataset.py b/verl/utils/dataset.py
+--- a/verl/utils/dataset.py
++++ b/verl/utils/dataset.py
+@@ -13,6 +13,7 @@
+ # limitations under the License.
+ 
+ import hashlib
++import json
+ import math
+ import os
+ from collections import defaultdict
+@@ -78,7 +79,57 @@
+     return image
+ 
+ 
+-IMAGE_CONDITIONS = {"real", "gray", "noise", "none"}
++IMAGE_CONDITIONS = {"real", "gray", "noise", "none", "caption"}
++PIXEL_IMAGE_CONDITIONS = {"real", "gray", "noise"}
++CAPTION_INSERT_TEMPLATE = "\n[Question-blind image description {index}: {caption}]\n"
++
++
++def _sha256_file(path: str) -> str:
++    digest = hashlib.sha256()
++    with open(path, "rb") as handle:
++        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def load_caption_store(paths: list[str]) -> tuple[dict[str, str], dict[str, str]]:
++    rows: dict[str, tuple[str, str, str]] = {}
++    for path in paths:
++        with open(path, encoding="utf-8") as handle:
++            for line in handle:
++                if not line.strip():
++                    continue
++                row = json.loads(line)
++                forbidden = {"question", "problem", "answer", "answer_a", "answer_b"} & row.keys()
++                if row.get("schema_version") != "lwl.caption-store.v1" or forbidden:
++                    raise ValueError(f"caption store violates the question-blind contract: {path}")
++                image_hash = str(row.get("image_sha256", ""))
++                caption = str(row.get("caption", "")).strip()
++                model = str(row.get("caption_model_path", "")).strip()
++                prompt_hash = str(row.get("caption_prompt_sha256", "")).strip()
++                if len(image_hash) != 64 or not caption or not model or len(prompt_hash) != 64:
++                    raise ValueError(f"caption store row is incomplete: {path}")
++                value = (caption, model, prompt_hash)
++                if image_hash in rows and rows[image_hash] != value:
++                    raise ValueError(f"conflicting captions for image hash {image_hash}")
++                rows[image_hash] = value
++    if not rows:
++        raise ValueError("caption image_condition requires a nonempty caption store")
++    models = {value[1] for value in rows.values()}
++    prompts = {value[2] for value in rows.values()}
++    if len(models) != 1 or len(prompts) != 1:
++        raise ValueError("caption store mixes caption models or prompts")
++    canonical = json.dumps(
++        [(image_hash, *rows[image_hash]) for image_hash in sorted(rows)],
++        ensure_ascii=True,
++        separators=(",", ":"),
++    ).encode("utf-8")
++    metadata = {
++        "caption_model_path": next(iter(models)),
++        "caption_prompt_sha256": next(iter(prompts)),
++        "caption_store_sha256": hashlib.sha256(canonical).hexdigest(),
++    }
++    return {image_hash: value[0] for image_hash, value in rows.items()}, metadata
+ 
+ 
+ def condition_image(image: ImageObject, condition: str, seed: int) -> ImageObject:
+@@ -135,6 +186,7 @@
+         filter_overlong_prompts_workers: int = 16,
+         image_condition: str = "real",
+         image_condition_seed: int = 0,
++        caption_store_paths: Optional[list[str]] = None,
+     ):
+         self.tokenizer = tokenizer
+         self.processor = processor
+@@ -154,6 +206,13 @@
+             )
+         self.image_condition = image_condition
+         self.image_condition_seed = image_condition_seed
++        self.caption_store_paths = list(caption_store_paths or [])
++        self.caption_by_hash: dict[str, str] = {}
++        self.caption_store_metadata: dict[str, str] = {}
++        if image_condition == "caption":
++            self.caption_by_hash, self.caption_store_metadata = load_caption_store(
++                self.caption_store_paths
++            )
+ 
+         if "@" in data_path:
+             data_path, data_split = data_path.split("@")
+@@ -189,7 +248,7 @@
+             format_prompt = Template(self.format_prompt.strip())
+             prompt_str = format_prompt.render(content=prompt_str)
+ 
+-        if self.image_key in example and self.image_condition != "none":
++        if self.image_key in example and self.image_condition in PIXEL_IMAGE_CONDITIONS:
+             # https://huggingface.co/docs/transformers/en/tasks/image_text_to_text
+             content_list = []
+             for i, content in enumerate(prompt_str.split("<image>")):
+@@ -210,6 +269,26 @@
+                     content_list.append({"type": "text", "text": content})
+ 
+             return [{"role": "user", "content": content_list}]
++        elif self.image_key in example and self.image_condition == "caption":
++            images = list(example[self.image_key])
++            parts = prompt_str.split("<image>")
++            if len(parts) - 1 != len(images):
++                raise ValueError(
++                    f"caption condition found {len(parts) - 1} image markers for {len(images)} images"
++                )
++            chunks = [parts[0]]
++            for index, (image, part) in enumerate(zip(images, parts[1:]), start=1):
++                if not isinstance(image, str):
++                    raise TypeError("caption condition requires content-addressable image paths")
++                path = os.path.join(self.image_dir, image) if self.image_dir is not None else image
++                image_hash = _sha256_file(path)
++                try:
++                    caption = self.caption_by_hash[image_hash]
++                except KeyError as error:
++                    raise KeyError(f"missing fixed caption for image hash {image_hash}") from error
++                chunks.append(CAPTION_INSERT_TEMPLATE.format(index=index, caption=caption))
++                chunks.append(part)
++            return [{"role": "user", "content": "".join(chunks).strip()}]
+         else:
+             prompt_str = prompt_str.replace("<image>", " ").strip()
+             return [{"role": "user", "content": prompt_str}]
+@@ -222,7 +301,7 @@
+ 
+     def _filter_overlong_prompts(self, example: dict[str, Any]) -> bool:
+         messages = self._build_messages(example)
+-        if self.image_key in example and self.image_condition != "none":
++        if self.image_key in example and self.image_condition in PIXEL_IMAGE_CONDITIONS:
+             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+             processed_images = self._prepare_images(example[self.image_key])
+             model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+@@ -253,7 +332,7 @@
+         messages = self._build_messages(example)
+         example.pop(self.prompt_key, None)
+ 
+-        if self.image_key in example and self.image_condition != "none":
++        if self.image_key in example and self.image_condition in PIXEL_IMAGE_CONDITIONS:
+             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+             images = example.pop(self.image_key)
+             processed_images = self._prepare_images(images)
+

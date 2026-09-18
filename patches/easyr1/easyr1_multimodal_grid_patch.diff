@@ -1,0 +1,50 @@
+diff --git a/verl/utils/dataset.py b/verl/utils/dataset.py
+--- a/verl/utils/dataset.py
++++ b/verl/utils/dataset.py
+@@ -293,17 +293,28 @@
+             prompt_str = prompt_str.replace("<image>", " ").strip()
+             return [{"role": "user", "content": prompt_str}]
+ 
+-    def _prepare_images(self, images: list[Any]) -> list[ImageObject]:
++    def _prepare_images(self, images: list[Any]) -> tuple[list[ImageObject], list[Any]]:
+         if self.image_dir is not None and len(images) != 0 and isinstance(images[0], str):
+             images = [os.path.join(self.image_dir, image) for image in images]
+-        processed = [process_image(image, self.min_pixels, self.max_pixels) for image in images]
+-        return [condition_image(image, self.image_condition, self.image_condition_seed) for image in processed]
++        processor_images = []
++        rollout_images = []
++        for image in images:
++            if self.image_condition == "real":
++                conditioned = image
++            else:
++                source = process_image(image, min_pixels=None, max_pixels=None)
++                conditioned = condition_image(
++                    source, self.image_condition, self.image_condition_seed
++                )
++            processor_images.append(process_image(conditioned, self.min_pixels, self.max_pixels))
++            rollout_images.append(conditioned)
++        return processor_images, rollout_images
+ 
+     def _filter_overlong_prompts(self, example: dict[str, Any]) -> bool:
+         messages = self._build_messages(example)
+         if self.image_key in example and self.image_condition in PIXEL_IMAGE_CONDITIONS:
+             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+-            processed_images = self._prepare_images(example[self.image_key])
++            processed_images, _ = self._prepare_images(example[self.image_key])
+             model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+             return model_inputs["input_ids"].size(-1) <= self.max_prompt_length
+         elif self.video_key in example:
+@@ -335,11 +346,11 @@
+         if self.image_key in example and self.image_condition in PIXEL_IMAGE_CONDITIONS:
+             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+             images = example.pop(self.image_key)
+-            processed_images = self._prepare_images(images)
++            processed_images, rollout_images = self._prepare_images(images)
+             model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+             input_ids = model_inputs.pop("input_ids")[0]
+             attention_mask = model_inputs.pop("attention_mask")[0]
+-            example["multi_modal_data"] = {"images": processed_images}
++            example["multi_modal_data"] = {"images": rollout_images}
+         elif self.video_key in example:
+             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+             videos = example.pop(self.video_key)

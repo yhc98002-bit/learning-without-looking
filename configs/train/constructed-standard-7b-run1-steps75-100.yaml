@@ -1,0 +1,122 @@
+# Standard arm, run 1, steps 75 to 100: starts from the step-75 weights that
+# constructed-standard-7b-run1-steps50-75 saved, with a fresh optimizer because only
+# weights are saved, and runs 25 more steps saving every 10. The step counter restarts
+# here, so the step-100 weights are this run's global_step_25. Everything else matches
+# constructed-standard-7b-run1.
+data:
+  train_files: data/training/constructed/train.parquet
+  # validation is off; this file is never scored, and the key cannot be null
+  val_files: data/training/constructed/plumbing_val.jsonl
+  prompt_key: problem
+  answer_key: answer
+  image_key: images
+  video_key: videos
+  image_dir: null
+  video_fps: 2.0
+  max_prompt_length: 4096  # 4096, not 2048: a coordinate render is about 2,236 prompt tokens here
+  max_response_length: 2048
+  rollout_batch_size: 240
+  mini_rollout_batch_size: null
+  val_batch_size: 32
+  format_prompt: artifacts/repos/EasyR1/examples/format_prompt/r1v.jinja
+  override_chat_template: null
+  shuffle: false  # the corpus is pre-shuffled by group and must stay group-adjacent
+  seed: 1
+  min_pixels: 262144
+  max_pixels: 4194304
+  filter_overlong_prompts: true
+  image_condition: real
+  image_condition_seed: 20260710
+  caption_store_paths:
+  - data/captions/geometry3k_3b/store_shard_0.jsonl
+  - data/captions/geometry3k_3b/store_shard_1.jsonl
+  - data/captions/geometry3k_3b/store_shard_2.jsonl
+algorithm:
+  adv_estimator: grpo
+  disable_kl: false
+  use_kl_loss: true
+  kl_penalty: low_var_kl
+  kl_coef: 0.01
+  online_filtering: false
+  filter_key: overall
+  filter_low: 0.01
+  filter_high: 0.99
+worker:
+  actor:
+    global_batch_size: 48
+    micro_batch_size_per_device_for_update: 1
+    micro_batch_size_per_device_for_experience: 2
+    max_grad_norm: 1.0
+    padding_free: false
+    dynamic_batching: true
+    ulysses_size: 1
+    model:
+      model_path: checkpoints/constructed-standard-7b-run1-steps50-75/global_step_25/actor/huggingface
+      enable_gradient_checkpointing: true
+      trust_remote_code: true
+      freeze_vision_tower: true
+      lora:
+        rank: 0
+        alpha: 64
+        target_modules: all-linear
+        exclude_modules: .*visual.*
+    optim:
+      lr: 1.0e-06
+      weight_decay: 0.01
+      strategy: adamw
+      lr_warmup_ratio: 0.0
+    fsdp:
+      enable_full_shard: true
+      enable_cpu_offload: false
+      enable_rank0_init: true
+    offload:
+      offload_params: true
+      offload_optimizer: true
+  rollout:
+    n: 5
+    temperature: 1.0
+    top_p: 1.0
+    limit_images: 0
+    gpu_memory_utilization: 0.45
+    enforce_eager: false
+    enable_chunked_prefill: false
+    tensor_parallel_size: 1
+    disable_tqdm: false
+    val_override_config:
+      temperature: 0.0
+      top_p: 1.0
+      n: 1
+  ref:
+    padding_free: false
+    fsdp:
+      enable_full_shard: true
+      enable_cpu_offload: true
+      enable_rank0_init: true
+    offload:
+      offload_params: false
+  reward:
+    reward_function: lwl/rewards/standard.py:compute_score
+    reward_function_kwargs:
+      format_weight: 0.5
+      require_shadow_log: true
+      symbolic_grader_timeout_seconds: 5.0
+trainer:
+  total_epochs: 1
+  max_steps: 25
+  project_name: learning-without-looking
+  experiment_name: constructed-standard-7b-run1-steps75-100
+  logger:
+  - file
+  nnodes: 1
+  n_gpus_per_node: 8
+  max_try_make_batch: 20
+  val_freq: 0
+  val_before_train: false
+  val_only: false
+  val_generations_to_log: 8
+  save_freq: 10
+  save_limit: -1
+  save_model_only: true
+  save_checkpoint_path: checkpoints/constructed-standard-7b-run1-steps75-100
+  load_checkpoint_path: null
+  find_last_checkpoint: false
