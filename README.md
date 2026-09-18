@@ -2,6 +2,8 @@
 
 [![Hugging Face dataset](https://img.shields.io/badge/Hugging%20Face-dataset-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/datasets/Despaireyes613/learning-without-looking)
 
+The model and dataset have been released on Hugging Face; readers can download them via the link above according to their needs.
+
 Code and released data for a study of what reinforcement learning with verifiable rewards (RLVR)
 teaches a vision-language model about looking.
 
