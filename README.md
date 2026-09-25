@@ -1,26 +1,44 @@
 # Same Reward, Different Skills
 
+![Eight task families: four coordinate-scene tasks (discovery, grounding, premise, label-swap) on top; a cued-readout chart, a header-cued table, a code matrix and sensor traces below](assets/task_gallery.png)
+
+*Eight of our nine task families: coordinate scenes on top, other formats below. You can't answer
+any of them without looking at the picture, which is more or less the whole point.*
+
 [![Hugging Face dataset](https://img.shields.io/badge/Hugging%20Face-dataset-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/datasets/Despaireyes613/learning-without-looking)
 
-The model and dataset have been released on Hugging Face; readers can download them via the link above according to their needs.
+The trained model and all the data are up on Hugging Face (the yellow badge right there). Grab
+whatever you need.
 
-Code and released data for a study of what reinforcement learning with verifiable rewards (RLVR)
-teaches a vision-language model about looking.
+## The short version
 
-RLVR raises vision-language benchmark scores even when visual information is removed during training:
-with images at test, blind-trained models recover roughly half of the real-image gain at 3B and nearly
-four fifths at 7B. Under prolonged training with real images, benchmark accuracy peaks and then stays
-near-flat while grounding falls below the base model's.
+Give a vision-language model a picture and a question, reward it for right answers (that's RLVR,
+reinforcement learning with verifiable rewards), and its benchmark scores go up. Great.
 
-Both follow from one fact: an image in the prompt is not an image in the learning signal. A training
-problem is visually resolvable when correct answers require the image and the task remains learnable.
-We build counterfactual coordinate scenes whose answers change with the image while the question stays
-fixed and never names the target. With the reward unchanged, standard GRPO learns to find the target
-and read it: discovery accuracy on held-out scenes rises from 0.425 to 0.875, drops to zero when the
-test image is replaced by a gray canvas, is not recovered by a matched-budget run trained without visual
-information, and transfers to independent grounding tasks.
+Now do the same thing, but hide the pictures during training. Scores still go up. Less great.
 
-## What is here
+Hand the real images back at test time and these blind-trained models recover roughly half of the
+real-image gain at 3B and nearly four fifths at 7B. Meanwhile, if you keep training *with* real
+images for a long time, benchmark accuracy peaks and then stays near-flat while grounding sinks below
+the base model's. The leaderboard looks fine. The model's eyesight, not so much.
+
+Both problems come from the same place: **an image in the prompt is not an image in the learning
+signal.** A picture sitting next to the question doesn't mean the reward ever needed it. We call a
+training problem *visually resolvable* when a correct answer requires the image and the task is still
+learnable.
+
+So we built some. Our counterfactual coordinate scenes change the answer whenever the image changes,
+while the question stays fixed and never names the target. To get it right, you have to go find the
+point. With the reward left exactly as it was, plain GRPO learns to find the target and read it:
+
+- discovery accuracy on held-out scenes goes from **0.425 to 0.875**
+- swap the test image for a gray canvas and it drops to **zero** (good, that's the idea)
+- a matched-budget run trained without visual information does **not** get the gain back
+- the skill **transfers** to independent grounding tasks
+
+Same reward, different skills. Hence the title.
+
+## What's in here
 
 ```
 lwl/scenes/         the coordinate scene program: densities, roles, twins, the four cue levels
@@ -39,34 +57,38 @@ tests/              CPU tests
 
 ## Install
 
-Python 3.10 to 3.12 (numpy 1.26.4 has no wheels for 3.13):
+Python 3.10 to 3.12. Not 3.13: numpy 1.26.4 has no wheels for it, and nobody deserves to build
+numpy from source.
 
 ```bash
-cd learning-without-looking
+cd learning-without-looking            # or wherever your copy lives
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-cpu.txt    # analysis and tests
 pip install -e .
 pytest -q
 ```
 
-Tests that need the released data are skipped until it is downloaded.
+Tests that need the released data are skipped until you download it. A long row of `s` is normal,
+not a cry for help.
 
-## Rebuild the paper's numbers
+## Rebuild the paper's numbers (laptop edition)
 
-The evaluation outputs of every run the paper reports are published item by item, so every table and
-figure can be rebuilt on a laptop:
+We published the evaluation outputs of every run in the paper, item by item, so every table and
+figure can be rebuilt on a laptop. No GPUs, no cluster, no begging anyone for compute:
 
 ```bash
 python scripts/fetch_data.py --part predictions     # about 22 MB
 python scripts/reproduce.py all --check
 ```
 
-Each target writes a CSV and a JSON into `results/`, and `--check` compares every rebuilt value with
-the value printed in the paper.
+Each target writes a CSV and a JSON into `results/`. With `--check`, every rebuilt value is compared
+with the value printed in the paper, so if we fat-fingered a number somewhere, the script will snitch
+on us.
 
-## Re-run the pipeline
+## Re-run the pipeline (GPU edition)
 
-Training and evaluation need GPUs and the full environment:
+This is the "I want to train it myself" path. You'll need GPUs, the full environment, and some
+patience:
 
 ```bash
 pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
@@ -76,9 +98,9 @@ bash scripts/setup_easyr1.sh                        # clone and patch the traine
 hf download Qwen/Qwen2.5-VL-7B-Instruct --local-dir artifacts/models/Qwen2.5-VL-7B-Instruct
 ```
 
-The reported step-100 constructed checkpoints come from a 30-step config and three segment configs,
-run in order. Only weights are saved, so each segment starts from the merged weights of the one
-before it:
+The step-100 constructed checkpoints in the paper come from a 30-step config plus three segment
+configs, run in order. We only saved weights, so each segment starts from the merged weights of the
+one before it. Think relay race, except the baton is a 7B model:
 
 ```bash
 R=constructed-standard-7b-run1
@@ -92,7 +114,7 @@ bash scripts/train.sh $R-steps75-100
 python scripts/merge_checkpoint.py --local_dir checkpoints/$R-steps75-100/global_step_25/actor
 ```
 
-Each checkpoint is then evaluated on the scenes (every cue level, real and gray images) and on the
+Then evaluate each checkpoint on the scenes (every cue level, real and gray images) and on the
 grounding suite and its twin:
 
 ```bash
@@ -105,25 +127,26 @@ python scripts/aggregate_evaluation.py --inputs "outputs/grounding/suite/shards/
     --output outputs/grounding/suite/metrics.json
 ```
 
-The long-horizon runs are also trained in segments, but save full checkpoints, so each segment
-resumes the previous one exactly; the headers of `configs/train/long-horizon-*.yaml` give the order.
+A few more things worth knowing before you start:
 
-The 3B recipes start from `artifacts/models/Qwen2.5-VL-3B-Instruct`. To evaluate the released
-checkpoint instead, fetch it with `python scripts/fetch_data.py --part checkpoint` and pass
-`--model checkpoints/constructed-standard-7b-run1-step100`.
-
-The ViRL39K images are not redistributed. `scripts/fetch_virl39k.py` takes them from the pinned
-upstream release and checks each against the SHA-256 recorded in the training rows.
-
-`scripts/build_scenes.py` regenerates the scene sets from the scene program,
-`scripts/build_training_corpus.py` builds the constructed training rows from the training scenes,
-and `scripts/build_mixtures.py` mixes them with the filtered ViRL39K rows; the published corpora let
-you skip these steps. The grounding suite and its twin are released frozen; their generators are
-`lwl/grounding/build_suite.py` and `lwl/grounding/build_twin.py`.
+- The long-horizon runs are also trained in segments, but they save full checkpoints, so each segment
+  resumes the previous one exactly. The headers of `configs/train/long-horizon-*.yaml` give the order.
+- The 3B recipes start from `artifacts/models/Qwen2.5-VL-3B-Instruct`.
+- Rather skip training altogether? Fair enough. Fetch our checkpoint with
+  `python scripts/fetch_data.py --part checkpoint` and pass
+  `--model checkpoints/constructed-standard-7b-run1-step100` to the evaluation commands above.
+- The ViRL39K images aren't ours to redistribute. `scripts/fetch_virl39k.py` pulls them from the
+  pinned upstream release and checks each one against the SHA-256 recorded in the training rows.
+- You don't need to rebuild the data (the published corpora cover it), but you can:
+  `scripts/build_scenes.py` regenerates the scene sets from the scene program,
+  `scripts/build_training_corpus.py` builds the constructed training rows from the training scenes,
+  and `scripts/build_mixtures.py` mixes them with the filtered ViRL39K rows.
+- The grounding suite and its twin ship frozen. If you want to see how the sausage was made, their
+  generators are `lwl/grounding/build_suite.py` and `lwl/grounding/build_twin.py`.
 
 ## Released data
 
-`scripts/fetch_data.py` downloads from the dataset repository (badge at the top):
+`scripts/fetch_data.py` downloads from the Hugging Face dataset repository (badge at the top):
 
 | part | size | contents |
 |---|---|---|
@@ -132,18 +155,25 @@ you skip these steps. The grounding suite and its twin are released frozen; thei
 | `corpora` | 150 MB | the filtered upstream corpora, the dose mixtures, the caption stores |
 | `checkpoint` | 16 GB | the 7B model trained on the constructed corpus with the standard reward |
 
-## Notes on the numbers
+If you only grab one thing, make it `predictions`: 22 MB, and it's what the rebuild above runs on.
+The 16 GB checkpoint is for people who mean business.
+
+## Fine print on the numbers
+
+The section everyone skips until a number doesn't match. Save yourself the future headache:
 
 - Pair files carry the repository's current scorer in `correct_a`, `correct_b` and `pair_correct`,
   and the flags recorded at evaluation time in the `*_as_logged` fields. Item files carry `correct`
   (the canonical matcher) and `correct_reward_matcher` (the training reward's matcher). Audit files
-  carry counts and rates under both matchers. The tables use the current pair scorer and the
-  canonical item matcher, with two exceptions: the degraded-set overlap (Figure 2c, Table E.2) uses
-  the `*_as_logged` flags, and the resolvability audit of the training corpora (Section 5,
-  Figure 3a and the mixture masses) uses the reward matcher (`*_reward_matcher`).
-- Six printed values cannot be rebuilt from the released files, such as the training-reward curve,
-  which comes from the trainer's own log. `--check` reports them as not rebuildable.
+  carry counts and rates under both matchers.
+- The tables use the current pair scorer and the canonical item matcher, with two exceptions: the
+  degraded-set overlap (Figure 2c, Table E.2) uses the `*_as_logged` flags, and the resolvability
+  audit of the training corpora (Section 5, Figure 3a and the mixture masses) uses the reward matcher
+  (`*_reward_matcher`).
+- Six printed values can't be rebuilt from the released files. The training-reward curve, for
+  example, comes straight from the trainer's own log. `--check` owns up to this and reports them as
+  not rebuildable.
 
 ## Licence
 
-Apache-2.0 for the code; see `LICENSE` and the third-party terms in `NOTICE`.
+Apache-2.0 for the code. See `LICENSE`, plus the third-party terms in `NOTICE`.
